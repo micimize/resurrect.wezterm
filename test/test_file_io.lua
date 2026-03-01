@@ -86,13 +86,17 @@ end
 
 function TestLoadJson:test_load_json_corrupt_file()
 	helper.write_file(self.path, "{{{invalid json")
-	-- Should return nil rather than crashing
+	-- dkjson.decode (our mock for wezterm.json_parse) returns nil for invalid
+	-- JSON rather than throwing. In real WezTerm, json_parse may throw instead.
+	-- Either way, load_json should not crash.
 	local ok, result = pcall(file_io.load_json, self.path)
-	-- Either returns nil gracefully or throws (document which)
 	if ok then
+		-- dkjson path: returns nil gracefully
 		lu.assertNil(result)
+	else
+		-- wezterm.json_parse path: throws on invalid JSON (acceptable)
+		lu.assertNotNil(result) -- error message exists
 	end
-	-- If pcall caught an error, that's also acceptable (json_parse may throw)
 end
 
 function TestLoadJson:test_load_json_sanitizes_control_chars()

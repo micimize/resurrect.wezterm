@@ -116,3 +116,63 @@ function TestValidatePaneTree:test_root_invalid_rejects_whole_tree()
 	lu.assertFalse(ok)
 	lu.assertEquals(reason, "empty cwd")
 end
+
+---------------------------------------------------------------------------
+-- pane_tree.fold / pane_tree.map (critical restore path)
+---------------------------------------------------------------------------
+TestFoldMap = {}
+
+function TestFoldMap:test_fold_nil_tree_returns_accumulator()
+	local acc = pane_tree.fold(nil, { count = 0 }, function(a, _)
+		a.count = a.count + 1
+		return a
+	end)
+	lu.assertEquals(acc.count, 0)
+end
+
+function TestFoldMap:test_fold_counts_all_nodes()
+	local tree = {
+		cwd = "/a",
+		right = { cwd = "/b" },
+		bottom = { cwd = "/c", right = { cwd = "/d" } },
+	}
+	local acc = pane_tree.fold(tree, { count = 0 }, function(a, _)
+		a.count = a.count + 1
+		return a
+	end)
+	lu.assertEquals(acc.count, 4)
+end
+
+function TestFoldMap:test_fold_collects_cwds()
+	local tree = {
+		cwd = "/a",
+		right = { cwd = "/b" },
+		bottom = { cwd = "/c" },
+	}
+	local acc = pane_tree.fold(tree, { cwds = {} }, function(a, node)
+		table.insert(a.cwds, node.cwd)
+		return a
+	end)
+	lu.assertEquals(#acc.cwds, 3)
+	lu.assertEquals(acc.cwds[1], "/a")
+end
+
+function TestFoldMap:test_map_nil_tree_returns_nil()
+	local result = pane_tree.map(nil, function(node) return node end)
+	lu.assertNil(result)
+end
+
+function TestFoldMap:test_map_transforms_all_nodes()
+	local tree = {
+		cwd = "/a",
+		right = { cwd = "/b" },
+		bottom = { cwd = "/c" },
+	}
+	pane_tree.map(tree, function(node)
+		node.visited = true
+		return node
+	end)
+	lu.assertTrue(tree.visited)
+	lu.assertTrue(tree.right.visited)
+	lu.assertTrue(tree.bottom.visited)
+end
