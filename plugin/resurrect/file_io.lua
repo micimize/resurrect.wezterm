@@ -71,6 +71,15 @@ end
 ---@param event_type "workspace" | "window" | "tab"
 function pub.write_state(file_path, state, event_type)
 	wezterm.emit("resurrect.file_io.write_state.start", file_path, event_type)
+
+	-- Backup existing state before overwriting so we can recover from
+	-- a bad save (e.g. periodic save during degraded state)
+	local existing = io.open(file_path, "r")
+	if existing then
+		existing:close()
+		os.rename(file_path, file_path .. ".bak")
+	end
+
 	local json_state = wezterm.json_encode(state)
 	json_state = sanitize_json(json_state)
 	if pub.encryption.enable then
@@ -111,11 +120,18 @@ function pub.load_json(file_path)
 			wezterm.emit("resurrect.file_io.decrypt.finished", file_path)
 		end
 	else
-		local lines = {}
-		for line in io.lines(file_path) do
-			table.insert(lines, line)
+		local ok, result = pcall(function()
+			local lines = {}
+			for line in io.lines(file_path) do
+				table.insert(lines, line)
+			end
+			return table.concat(lines)
+		end)
+		if ok then
+			json = result
+		else
+			wezterm.log_warn("resurrect: could not read state file: " .. tostring(result))
 		end
-		json = table.concat(lines)
 	end
 	if not json then
 		return nil

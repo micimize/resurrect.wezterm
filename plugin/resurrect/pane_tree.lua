@@ -11,6 +11,38 @@ pub.max_nlines = 3500
 ---@alias pane_tree {left: integer, top: integer, height: integer, width: integer, bottom: pane_tree?, right: pane_tree?, text: string, cwd: string, domain?: string, process?: local_process_info?, pane: Pane?, is_active: boolean, is_zoomed: boolean, alt_screen_active: boolean}
 ---@alias local_process_info {name: string, argv: string[], cwd: string, executable: string}
 
+---Check if a pane is healthy enough to include in serialized state.
+---Filters out ghost panes (e.g. SSH tabs stuck in "Connecting...") that have
+---no resolved cwd, zero cell dimensions, or non-spawnable domains.
+---@param pane_info PaneInformation
+---@return boolean healthy
+---@return string? reason
+local function is_pane_healthy(pane_info)
+	local pane = pane_info.pane
+	if not pane then
+		return false, "nil pane object"
+	end
+
+	local cwd = pane:get_current_working_dir()
+	if not cwd or not cwd.file_path or cwd.file_path == "" then
+		return false, "no resolved cwd (likely stuck in Connecting...)"
+	end
+
+	-- Cell dimensions from PaneInformation; zero means never rendered
+	if pane_info.width == 0 and pane_info.height == 0 then
+		return false, "zero cell dimensions (never rendered)"
+	end
+
+	local ok, domain = pcall(function()
+		return wezterm.mux.get_domain(pane:get_domain_name())
+	end)
+	if ok and domain and not domain:is_spawnable() then
+		return false, "domain " .. pane:get_domain_name() .. " is not spawnable"
+	end
+
+	return true, nil
+end
+
 ---compare function returns true if a is more left than b
 ---@param a PaneInformation
 ---@param b PaneInformation
@@ -73,6 +105,12 @@ end
 local function insert_panes(root, panes)
 	if root == nil then
 		return nil
+	end
+
+	-- Guard against nil pane (can happen in symmetric layouts where a pane
+	-- appears in both right and bottom lists; PR #127)
+	if root.pane == nil then
+		return root
 	end
 
 	local domain = root.pane:get_domain_name()
@@ -141,13 +179,32 @@ local function insert_panes(root, panes)
 	return root
 end
 
----Create a pane tree from a list of PaneInformation
+---Create a pane tree from a list of PaneInformation.
+---Filters out unhealthy panes (ghost tabs, stuck SSH connections) before
+---building the spatial tree. Note: for multi-pane layouts, filtering before
+---tree construction can break spatial adjacency calculations. This is
+---acceptable because ghost panes are almost always single-pane tabs.
 ---@param panes PaneInformation
 ---@return pane_tree | nil
 function pub.create_pane_tree(panes)
-	table.sort(panes, compare_pane_by_coord)
-	local root = table.remove(panes, 1)
-	return insert_panes(root, panes)
+	local healthy_panes = {}
+	for _, pane_info in ipairs(panes) do
+		local healthy, reason = is_pane_healthy(pane_info)
+		if healthy then
+			table.insert(healthy_panes, pane_info)
+		else
+			local pane_id = pane_info.pane and pane_info.pane:pane_id() or "nil"
+			wezterm.log_warn("resurrect: skipping unhealthy pane " .. tostring(pane_id) .. ": " .. (reason or "unknown"))
+		end
+	end
+
+	if #healthy_panes == 0 then
+		return nil
+	end
+
+	table.sort(healthy_panes, compare_pane_by_coord)
+	local root = table.remove(healthy_panes, 1)
+	return insert_panes(root, healthy_panes)
 end
 
 ---maps over the pane tree
@@ -184,6 +241,52 @@ function pub.fold(pane_tree, acc, f)
 	end
 
 	return acc
+end
+
+---Validate a deserialized pane_tree before attempting to restore it.
+---Prunes invalid subtrees in place rather than rejecting the whole tree.
+---@param pane_tree pane_tree
+---@return boolean valid
+---@return string? reason
+function pub.validate_pane_tree(pane_tree)
+	if pane_tree == nil then
+		return false, "nil pane_tree"
+	end
+
+	if not pane_tree.cwd or pane_tree.cwd == "" then
+		return false, "empty cwd"
+	end
+
+	if pane_tree.domain then
+		local ok, domain = pcall(function()
+			return wezterm.mux.get_domain(pane_tree.domain)
+		end)
+		if not ok or not domain then
+			return false, "domain '" .. tostring(pane_tree.domain) .. "' does not exist"
+		end
+		if not domain:is_spawnable() then
+			return false, "domain '" .. pane_tree.domain .. "' is not spawnable"
+		end
+	end
+
+	-- Prune invalid subtrees rather than rejecting the whole tree
+	if pane_tree.right then
+		local valid, reason = pub.validate_pane_tree(pane_tree.right)
+		if not valid then
+			wezterm.log_warn("resurrect: pruning invalid right pane: " .. (reason or "unknown"))
+			pane_tree.right = nil
+		end
+	end
+
+	if pane_tree.bottom then
+		local valid, reason = pub.validate_pane_tree(pane_tree.bottom)
+		if not valid then
+			wezterm.log_warn("resurrect: pruning invalid bottom pane: " .. (reason or "unknown"))
+			pane_tree.bottom = nil
+		end
+	end
+
+	return true, nil
 end
 
 return pub

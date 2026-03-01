@@ -39,10 +39,20 @@ end
 ---@return table
 function pub.load_state(name, type)
 	wezterm.emit("resurrect.state_manager.load_state.start", name, type)
-	local json = file_io.load_json(get_file_path(name, type))
+	local file_path = get_file_path(name, type)
+	local json = file_io.load_json(file_path)
 	if not json then
-		wezterm.emit("resurrect.error", "Invalid json: " .. get_file_path(name, type))
-		return {}
+		-- Try backup file
+		local bak_path = file_path .. ".bak"
+		wezterm.log_warn("resurrect: primary state file invalid, trying backup: " .. bak_path)
+		local ok, bak_json = pcall(file_io.load_json, bak_path)
+		if ok and bak_json then
+			wezterm.log_info("resurrect: restored from backup: " .. bak_path)
+			json = bak_json
+		else
+			wezterm.emit("resurrect.error", "Invalid json (both primary and backup): " .. file_path)
+			return {}
+		end
 	end
 	wezterm.emit("resurrect.state_manager.load_state.finished", name, type)
 	return json
@@ -60,7 +70,12 @@ function pub.periodic_save(opts)
 	wezterm.time.call_after(opts.interval_seconds, function()
 		wezterm.emit("resurrect.state_manager.periodic_save.start", opts)
 		if opts.save_workspaces then
-			pub.save_state(require("resurrect.workspace_state").get_workspace_state())
+			local state = require("resurrect.workspace_state").get_workspace_state()
+			if #state.window_states > 0 then
+				pub.save_state(state)
+			else
+				wezterm.log_warn("resurrect: periodic save skipped -- workspace has no valid windows")
+			end
 		end
 
 		if opts.save_windows then
@@ -68,7 +83,12 @@ function pub.periodic_save(opts)
 				local mux_win = gui_win:mux_window()
 				local title = mux_win:get_title()
 				if title ~= "" and title ~= nil then
-					pub.save_state(require("resurrect.window_state").get_window_state(mux_win))
+					local state = require("resurrect.window_state").get_window_state(mux_win)
+					if #state.tabs > 0 then
+						pub.save_state(state)
+					else
+						wezterm.log_warn("resurrect: periodic save skipped window '" .. title .. "' -- no valid tabs")
+					end
 				end
 			end
 		end
