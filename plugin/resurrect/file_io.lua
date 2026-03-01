@@ -141,4 +141,9 @@ function pub.load_json(file_path)
 	return wezterm.json_parse(json)
 end
 
+-- Export private functions for testing (only when _RESURRECT_TESTING is set)
+if _RESURRECT_TESTING then
+	pub._sanitize_json = sanitize_json
+end
+
 return pub

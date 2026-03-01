@@ -289,4 +289,12 @@ function pub.validate_pane_tree(pane_tree)
 	return true, nil
 end
 
+-- Export private functions for testing (only when _RESURRECT_TESTING is set)
+if _RESURRECT_TESTING then
+	pub._is_pane_healthy = is_pane_healthy
+	pub._compare_pane_by_coord = compare_pane_by_coord
+	pub._is_right = is_right
+	pub._is_bottom = is_bottom
+end
+
 return pub
