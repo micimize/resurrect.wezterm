@@ -115,7 +115,9 @@ function pub.restore_tab(tab, tab_state, opts)
 	end
 
 	local acc = pane_tree_mod.fold(tab_state.pane_tree, { is_zoomed = false }, make_splits(opts))
-	acc.active_pane:activate()
+	if acc.active_pane then
+		acc.active_pane:activate()
+	end
 	wezterm.emit("resurrect.tab_state.restore_tab.finished")
 end
 

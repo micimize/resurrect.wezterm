@@ -77,7 +77,10 @@ function pub.write_state(file_path, state, event_type)
 	local existing = io.open(file_path, "r")
 	if existing then
 		existing:close()
-		os.rename(file_path, file_path .. ".bak")
+		local ok, err = os.rename(file_path, file_path .. ".bak")
+		if not ok then
+			wezterm.log_warn("resurrect: backup rename failed: " .. tostring(err))
+		end
 	end
 
 	local json_state = wezterm.json_encode(state)
@@ -89,7 +92,7 @@ function pub.write_state(file_path, state, event_type)
 		end)
 		if not ok then
 			wezterm.emit("resurrect.error", "Encryption failed: " .. tostring(err))
-			wezterm.log_error("Decryption failed: " .. tostring(err))
+			wezterm.log_error("Encryption failed: " .. tostring(err))
 		else
 			wezterm.emit("resurrect.file_io.encrypt.finished", file_path)
 		end
